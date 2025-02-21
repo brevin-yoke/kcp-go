@@ -326,10 +326,10 @@ RESET_TIMER:
 }
 
 // Write implements net.Conn
-func (s *UDPSession) Write(b []byte) (n int, err error) { return s.WriteBuffers([][]byte{b}) }
+func (s *UDPSession) Write(b []byte) (n int, err error) { return s.WriteBuffer(b) }
 
 // WriteBuffers write a vector of byte slices to the underlying connection
-func (s *UDPSession) WriteBuffers(v [][]byte) (n int, err error) {
+func (s *UDPSession) WriteBuffer(b []byte) (n int, err error) {
 RESET_TIMER:
 	var timeout *time.Timer
 	var c <-chan time.Time
@@ -356,17 +356,17 @@ RESET_TIMER:
 		waitsnd := s.kcp.WaitSnd()
 		if waitsnd < int(s.kcp.snd_wnd) && waitsnd < int(s.kcp.rmt_wnd) {
 			// transmit all data sequentially, make sure every packet size is within 'mss'
-			for _, b := range v {
-				n += len(b)
-				// handle each slice for packet splitting
-				for {
-					if len(b) <= int(s.kcp.mss) {
-						s.kcp.Send(b)
-						break
-					} else {
-						s.kcp.Send(b[:s.kcp.mss])
-						b = b[s.kcp.mss:]
-					}
+			n += len(b)
+			limit := int(s.kcp.mss * 254)
+			// handle each slice for packet splitting
+			for {
+				if len(b) <= limit {
+					s.kcp.Send(b)
+					break
+				} else {
+					s.kcp.flush(false)
+					s.kcp.Send(b[:limit])
+					b = b[limit:]
 				}
 			}
 
