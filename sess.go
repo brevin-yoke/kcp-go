@@ -228,6 +228,7 @@ func newUDPSession(conv uint32, dataShards, parityShards int, l *Listener, conn 
 
 		}
 	})
+	sess.kcp.stream = 1
 
 	// create post-processing goroutine
 	go sess.postProcess()
@@ -357,7 +358,7 @@ RESET_TIMER:
 		if waitsnd < int(s.kcp.snd_wnd) && waitsnd < int(s.kcp.rmt_wnd) {
 			// transmit all data sequentially, make sure every packet size is within 'mss'
 			n += len(b)
-			limit := int(s.kcp.mss * 254)
+			limit := int(s.kcp.mss * 255)
 			// handle each slice for packet splitting
 			for {
 				if len(b) <= limit {
