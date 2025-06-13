@@ -82,9 +82,16 @@ const (
 
 var (
 	errInvalidOperation = errors.New("invalid operation")
-	errTimeout          = errors.New("timeout")
+	errTimeout          = timeoutError{}
 	errNotOwner         = errors.New("not the owner of this connection")
 )
+
+// timeoutError implements net.Error
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "timeout" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }
 
 var (
 	// a system-wide packet buffer shared among sending, receiving and FEC
@@ -426,12 +433,6 @@ func (s *UDPSession) Close() error {
 		// try best to send all queued messages especially the data in txqueue
 		s.mu.Lock()
 		s.kcp.flush(false)
-
-		// release pending segments to recyle memory
-		s.kcp.ReleaseTX()
-		if s.fecDecoder != nil {
-			s.fecDecoder.release()
-		}
 		s.mu.Unlock()
 
 		if s.l != nil { // belongs to listener
@@ -800,16 +801,12 @@ func (s *UDPSession) packetInput(data []byte) {
 }
 
 func (s *UDPSession) kcpInput(data []byte) {
-	var kcpInErrors, fecErrs, fecRecovered, fecParityShards uint64
+	var kcpInErrors uint64
 
 	fecFlag := binary.LittleEndian.Uint16(data[4:])
 	if fecFlag == typeData || fecFlag == typeParity { // 16bit kcp cmd [81-84] and frg [0-255] will not overlap with FEC type 0x00f1 0x00f2
 		if len(data) >= fecHeaderSizePlus2 {
 			f := fecPacket(data)
-			if f.flag() == typeParity {
-				fecParityShards++
-			}
-
 			// lock
 			s.mu.Lock()
 			// if fecDecoder is not initialized, create one with default parameter
@@ -831,16 +828,10 @@ func (s *UDPSession) kcpInput(data []byte) {
 				if len(r) >= 2 { // must be larger than 2bytes
 					sz := binary.LittleEndian.Uint16(r)
 					if int(sz) <= len(r) && sz >= 2 {
-						if ret := s.kcp.Input(r[2:sz], false, s.ackNoDelay); ret == 0 {
-							fecRecovered++
-						} else {
+						if ret := s.kcp.Input(r[2:sz], false, s.ackNoDelay); ret != 0 {
 							kcpInErrors++
 						}
-					} else {
-						fecErrs++
 					}
-				} else {
-					fecErrs++
 				}
 				// recycle the buffer
 				xmitBuf.Put(r)
@@ -878,19 +869,9 @@ func (s *UDPSession) kcpInput(data []byte) {
 
 	atomic.AddUint64(&DefaultSnmp.InPkts, 1)
 	atomic.AddUint64(&DefaultSnmp.InBytes, uint64(len(data)))
-	if fecParityShards > 0 {
-		atomic.AddUint64(&DefaultSnmp.FECParityShards, fecParityShards)
-	}
 	if kcpInErrors > 0 {
 		atomic.AddUint64(&DefaultSnmp.KCPInErrors, kcpInErrors)
 	}
-	if fecErrs > 0 {
-		atomic.AddUint64(&DefaultSnmp.FECErrs, fecErrs)
-	}
-	if fecRecovered > 0 {
-		atomic.AddUint64(&DefaultSnmp.FECRecovered, fecRecovered)
-	}
-
 }
 
 type (
