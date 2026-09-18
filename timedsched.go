@@ -23,10 +23,11 @@
 package kcp
 
 import (
-	"container/heap"
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/xtaci/kcp-go/v5/internal/heap"
 )
 
 // SystemTimedSched is the library-level timed scheduler, shared by all sessions.
@@ -38,14 +39,16 @@ type timedFunc struct {
 	ts      time.Time
 }
 
-// a heap for sorted timed function
+// timedFuncHeap is a min-heap of timedFunc ordered by ts. It implements
+// heap.Interface[timedFunc]; because the generic heap stores timedFunc values
+// directly, Push/Pop involve no any-boxing.
 type timedFuncHeap []timedFunc
 
 func (h timedFuncHeap) Len() int           { return len(h) }
 func (h timedFuncHeap) Less(i, j int) bool { return h[i].ts.Before(h[j].ts) }
 func (h timedFuncHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-func (h *timedFuncHeap) Push(x any)        { *h = append(*h, x.(timedFunc)) }
-func (h *timedFuncHeap) Pop() any {
+func (h *timedFuncHeap) Push(x timedFunc)  { *h = append(*h, x) }
+func (h *timedFuncHeap) Pop() timedFunc {
 	old := *h
 	n := len(old)
 	x := old[n-1]
@@ -128,7 +131,7 @@ func (ts *TimedSched) sched() {
 			drained = true
 			for tasks.Len() > 0 {
 				if now.After(tasks[0].ts) {
-					heap.Pop(&tasks).(timedFunc).execute()
+					heap.Pop(&tasks).execute()
 				} else {
 					timer.Reset(tasks[0].ts.Sub(now))
 					drained = false
